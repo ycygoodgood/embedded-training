@@ -6,43 +6,58 @@
 | --- | --- |
 | 仓库地址 | https://github.com/ycygoodgood/embedded-training |
 
-环境：Windows 11 / PowerShell 7，Rust 工具链按 `rust-toolchain.toml` 固定，probe-rs（版本待填），pyserial（版本待填）。
+环境：Windows 11 / PowerShell 7，Rust 工具链按 `rust-toolchain.toml` 固定，probe-rs 0.32.0，pyserial（待实验室安装）。
 
-## 1. 编译与烧录
-
-| # | 命令 | 实际输出（摘要） | 判定 |
-| --- | --- | --- | --- |
-| 1 | `cargo build --locked` | （填写，例如 `Finished dev profile ...`） | ☐ 通过 |
-| 2 | `probe-rs list` | （填写，应含探针型号；烧过固件后含 `DM-MC02 CMSIS-DAP Demo`） | ☐ 通过 |
-| 3 | `cargo run --locked` | （填写：烧录完成后终端停住，按 Ctrl+C 退出） | ☐ 通过 |
-
-## 2. USB 与控制口
+## 1. 编译（已完成）
 
 | # | 命令 | 实际输出 | 判定 |
 | --- | --- | --- | --- |
-| 4 | `python -m serial.tools.list_ports` | （填写两个 COM 口） | ☐ 通过 |
-| 5 | `python host.py <控制口> ping` | `OK DM-MC02` | ☐ 通过 |
+| 1 | `cargo build --locked` | `Finished \`dev\` profile [optimized + debuginfo] target(s) in 23.36s` | 通过 |
+| 2 | `cargo build --locked --offline` | `Finished \`dev\` profile [optimized + debuginfo] target(s) in 0.29s` | 通过 |
 
-## 3. SWD 读 DPIDR
+第 2 条证明依赖已全部缓存，在无网络的实验室环境也能直接编译。
+
+## 2. 烧录（未测）
 
 | # | 命令 | 实际输出 | 判定 |
 | --- | --- | --- | --- |
-| 6 | `python host.py <控制口> swd` | `OK DPIDR （填写）` | ☐ 通过 |
-| 7 | `python host.py <控制口> swd`（重复一次） | `OK DPIDR （应与上一次逐字符一致）` | ☐ 通过 |
-| 8 | `python host.py <控制口> ping` | `OK DM-MC02` | ☐ 通过 |
+| 3 | `probe-rs list` | 未测 | — |
+| 4 | `cargo run --locked` | 未测 | — |
 
-## 4. UART 回环
+## 3. USB 与控制口（未测）
+
+| # | 命令 | 实际输出 | 判定 |
+| --- | --- | --- | --- |
+| 5 | `python -m serial.tools.list_ports` | 未测 | — |
+| 6 | `python host.py <控制口> ping` | 未测 | — |
+
+## 4. SWD 读 DPIDR（未测）
+
+| # | 命令 | 实际输出 | 判定 |
+| --- | --- | --- | --- |
+| 7 | `python host.py <控制口> swd` | 未测 | — |
+| 8 | `python host.py <控制口> swd`（重复一次） | 未测 | — |
+| 9 | `python host.py <控制口> ping` | 未测 | — |
+
+## 5. UART 回环（未测）
 
 接线：断电后短接 P16-15（RX）与 P16-17（TX）。
 
 | # | 命令 | 实际输出 | 判定 |
 | --- | --- | --- | --- |
-| 9 | `python host.py <UART口> uart-loopback` | `OK UART loopback` | ☐ 通过 |
+| 10 | `python host.py <UART口> uart-loopback` | 未测 | — |
 
-## 5. 未测项目
+## 6. 未测原因
 
-| 项目 | 原因 |
-| --- | --- |
-| 双板 SWD 测试（两块 DM-MC02 分别供电、接 GND） | （填写，例如只有一块板 / 缺少杜邦线） |
-| Classical CAN 与第二节点收发 | （填写，例如没有 CAN 对端节点） |
-| CAN FD / Linux SocketCAN 选做 | （填写，例如环境不满足） |
+手上只有笔记本电脑，没有 DM-MC02 板卡、外置调试探针（DAPLink）和杜邦线，无法完成首次烧录，因此第 2~5 节全部无法进行。板卡与探针需在实验室使用。
+
+## 7. 补测计划
+
+拿到板卡和探针后按以下顺序执行，并把输出回填上表：
+
+1. 探针 SWDIO / SWCLK / GND 接板子 P1（P1.3 = SWCLK，P1.4 = SWDIO），`probe-rs list` 确认识别
+2. `cargo run --locked` 烧录，完成后 Ctrl+C 退出并拔掉探针
+3. USB-C 接电脑，`python -m serial.tools.list_ports` 看到两个串口，用 `PING` 辨认控制口
+4. 断电接 P16-11 → P1.3、P16-13 → P1.4，`SWD ID` 连读两次并比对
+5. 断电短接 P16-15 / P16-17，跑 `uart-loopback`
+6. 未做的选做项（双板 SWD、CAN、CAN FD）在表中如实标注
