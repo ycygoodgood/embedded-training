@@ -4,7 +4,7 @@
 
 ## 实现方式
 
-在 `src/board.rs` 的 `can1()` 里把 FDCAN1 配成 CAN FD + BRS：仲裁段 1 Mbit/s、数据段 5 Mbit/s，并启用 TDC。在 `src/protocol.rs` 增加两条命令，给 FD 帧一个可实际调用的收发路径。基础作业的 SWD 和 UART 没有改动。
+在 `src/board.rs` 的 `can1()` 里把 FDCAN1 配成 CAN FD + BRS：仲裁段 1 Mbit/s、数据段 5 Mbit/s，并启用 TDC。在 `src/protocol.rs` 增加两条命令，给 FD 帧一个可实际调用的收发路径。基础作业的 SWD 和 UART 没有改动；帧发送配置用的是 `AllowFdCanAndBRS`，经典 CAN 帧照样能收发，原来的 `CAN TX` / `CAN RX` 命令行为不变。
 
 ## 位时序
 
