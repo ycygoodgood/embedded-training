@@ -1,7 +1,8 @@
 use core::fmt::Write;
+use embassy_stm32::can::frame::{FdData, FdFrame, Header};
 use embassy_stm32::can::{Can, Frame};
 use embassy_time::{Duration, with_timeout};
-use embedded_can::{Frame as _, Id};
+use embedded_can::{Frame as _, Id, StandardId};
 use heapless::String;
 
 use crate::swd::Swd;
@@ -90,6 +91,55 @@ pub async fn execute(command: &str, can: &mut Can<'_>, swd: &mut Option<Swd>) ->
             }
             out.push('\n').expect("line ending fits");
         }
+        // CAN FD: fixed payload pattern (byte i = i), BRS on, ID and length from the command.
+        // `CAN FD TX <id> <len>` with len in {0..8, 12, 16, 20, 24, 32, 48, 64}.
+        (Some("CAN"), Some("FD")) => match words.next() {
+            Some("TX") => {
+                let (Some(id), Some(len), None) = (words.next(), words.next(), words.next()) else {
+                    return fixed("ERR SYNTAX\n");
+                };
+                let Some(id) = u16::from_str_radix(id, 16).ok() else {
+                    return fixed("ERR FRAME\n");
+                };
+                let Some(len) = len.parse::<usize>().ok().filter(|l| FdData::is_valid_len(*l)) else {
+                    return fixed("ERR FRAME\n");
+                };
+                let mut payload = [0u8; 64];
+                for (i, byte) in payload[..len].iter_mut().enumerate() {
+                    *byte = i as u8;
+                }
+                let Some(header) = StandardId::new(id).map(|id| Header::new_fd(id.into(), len as u8, false, true)) else {
+                    return fixed("ERR FRAME\n");
+                };
+                let Ok(frame) = FdFrame::new(header, &payload[..len]) else {
+                    return fixed("ERR FRAME\n");
+                };
+                return match with_timeout(Duration::from_millis(100), can.write_fd(&frame)).await {
+                    Ok(_) => fixed("OK QUEUED FD\n"),
+                    Err(_) => fixed("ERR CAN TX\n"),
+                };
+            }
+            Some("RX") if words.next().is_none() => {
+                let envelope = match with_timeout(Duration::from_millis(100), can.read_fd()).await {
+                    Ok(Ok(frame)) => frame,
+                    Ok(Err(_)) => return fixed("ERR CAN RX\n"),
+                    Err(_) => return fixed("EMPTY\n"),
+                };
+                let frame = envelope.frame;
+                let Id::Standard(id) = *frame.id() else {
+                    return fixed("ERR UNSUPPORTED_FRAME\n");
+                };
+                // The reply has to fit one 63 byte string, so only the first 16 payload bytes
+                // are printed; the length is reported separately.
+                let data = frame.data();
+                write!(out, "OK FD RX {:03X} {} ", id.as_raw(), data.len()).expect("FD prefix fits");
+                for byte in &data[..data.len().min(16)] {
+                    write!(out, "{byte:02X}").expect("16 byte payload fits");
+                }
+                out.push('\n').expect("line ending fits");
+            }
+            _ => return fixed("ERR SYNTAX\n"),
+        },
         _ => return fixed("ERR SYNTAX\n"),
     }
     out

@@ -4,9 +4,9 @@ use embassy_stm32::{
     Config, Peri, Peripherals, bind_interrupts,
     can::{
         Can, CanConfigurator, IT0InterruptHandler, IT1InterruptHandler,
-        config::{FrameTransmissionConfig, NominalBitTiming},
+        config::{DataBitTiming, FrameTransmissionConfig, NominalBitTiming},
     },
-    peripherals,
+    pac, peripherals,
     rcc::{
         Hse, HseMode, Hsi48Config, Pll, PllDiv, PllMul, PllPreDiv, PllSource,
         mux::{Fdcansel, Usbsel},
@@ -61,24 +61,65 @@ pub fn usb(
     Driver::new_fs(otg, UsbIrqs, dp, dm, OUT.init([0; 512]), config)
 }
 
-/// Provided CAN1 setup for the onboard transceiver and 80 MHz FDCAN clock.
+/// CAN FD setup: 1 Mbit/s arbitration phase, 5 Mbit/s data phase with BRS, TDC on.
 pub fn can1(
     fdcan: Peri<'static, peripherals::FDCAN1>,
     rx: Peri<'static, peripherals::PD0>,
     tx: Peri<'static, peripherals::PD1>,
 ) -> Can<'static> {
     let mut can = CanConfigurator::new(fdcan, rx, tx, CanIrqs);
-    // 1 Mbit/s, 75% sample point. Segment lengths are in time quanta.
-    let timing = NominalBitTiming {
+
+    // Arbitration phase: 80 MHz / 80 tq = 1 Mbit/s, sample point (1+59)/80 = 75%.
+    let nominal = NominalBitTiming {
         prescaler: NonZeroU16::new(1).unwrap(),
         seg1: NonZeroU8::new(59).unwrap(),
         seg2: NonZeroU8::new(20).unwrap(),
         sync_jump_width: NonZeroU8::new(20).unwrap(),
     };
+
+    // Data phase: 80 MHz / 16 tq = 5 Mbit/s, sample point (1+11)/16 = 75%.
+    let data = DataBitTiming {
+        transceiver_delay_compensation: true,
+        prescaler: NonZeroU16::new(1).unwrap(),
+        seg1: NonZeroU8::new(11).unwrap(),
+        seg2: NonZeroU8::new(4).unwrap(),
+        sync_jump_width: NonZeroU8::new(3).unwrap(),
+    };
+
     let config = can
         .config()
-        .set_nominal_bit_timing(timing)
-        .set_frame_transmit(FrameTransmissionConfig::ClassicCanOnly);
+        .set_nominal_bit_timing(nominal)
+        .set_data_bit_timing(data)
+        .set_frame_transmit(FrameTransmissionConfig::AllowFdCanAndBRS);
     can.set_config(config);
-    can.into_normal_mode()
+
+    let can = can.into_normal_mode();
+    enable_tdc();
+    can
+}
+
+/// TDC offset and filter window, in data phase time quanta (1 tq = 12.5 ns at 80 MHz).
+const TDC_OFFSET: u8 = 2;
+const TDC_FILTER: u8 = 12;
+
+/// embassy-stm32 0.6 never writes the TDC fields: `DataBitTiming` carries a
+/// `transceiver_delay_compensation` flag but the register write is still a TODO in the
+/// crate, and `set_data_bit_timing` overwrites DBTP without the TDC bit. So DBTP.TDC and
+/// TDCR are programmed here, after the driver has applied its configuration. Both are
+/// write protected, which is why the peripheral is briefly put back into config mode.
+fn enable_tdc() {
+    let cccr = pac::FDCAN1.cccr();
+    cccr.modify(|w| w.set_init(true));
+    while !cccr.read().init() {}
+    cccr.modify(|w| w.set_cce(true));
+
+    pac::FDCAN1.dbtp().modify(|w| w.set_tdc(true));
+    pac::FDCAN1.tdcr().modify(|w| {
+        w.set_tdco(TDC_OFFSET);
+        w.set_tdcf(TDC_FILTER);
+    });
+
+    cccr.modify(|w| w.set_cce(false));
+    cccr.modify(|w| w.set_init(false));
+    while cccr.read().init() {}
 }
